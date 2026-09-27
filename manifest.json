@@ -1,0 +1,33 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to your CBS250 switch",
+        "description": "SNMP must be enabled on the switch (SNMP > Communities) with a read-only community string.",
+        "data": {
+          "host": "Host (IP address)",
+          "community": "SNMP community string",
+          "port": "SNMP port"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach the switch via SNMP. Check the IP, community string, and that SNMP is enabled.",
+      "unknown": "Unexpected error — check the Home Assistant logs."
+    },
+    "abort": {
+      "already_configured": "This switch is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "CBS250 Monitor options",
+        "data": {
+          "scan_interval": "Polling interval (seconds)",
+          "enable_cable_length": "Poll cable length (passive VCT read)"
+        }
+      }
+    }
+  }
+}
