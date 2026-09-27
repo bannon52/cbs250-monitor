@@ -194,3 +194,46 @@ async def test_diagnostics_disabled_by_default(hass: HomeAssistant, switch, entr
 async def test_unload(hass: HomeAssistant, switch, entry):
     await setup(hass, entry)
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_old_default_disabled_sensors_are_reenabled(hass: HomeAssistant, switch, entry):
+    """v0.2 disabled link status by default; HA restores that on re-add."""
+    entry.add_to_hass(hass)
+    ent_reg = er.async_get(hass)
+    stale = ent_reg.async_get_or_create(
+        "sensor", DOMAIN, f"{SW}_2_link_status", config_entry=entry,
+        suggested_object_id="gi2_link_status",
+        disabled_by=er.RegistryEntryDisabler.INTEGRATION,
+    )
+    mine = ent_reg.async_get_or_create(
+        "sensor", DOMAIN, f"{SW}_3_link_status", config_entry=entry,
+        suggested_object_id="gi3_link_status",
+        disabled_by=er.RegistryEntryDisabler.USER,
+    )
+    still_off = ent_reg.async_get_or_create(
+        "sensor", DOMAIN, f"{SW}_3_cable_length", config_entry=entry,
+        suggested_object_id="gi3_cable_length",
+        disabled_by=er.RegistryEntryDisabler.INTEGRATION,
+    )
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert ent_reg.async_get(stale.entity_id).disabled_by is None
+    assert hass.states.get("sensor.gi2_link_status").state == "up"
+    # User's own choice is respected
+    assert ent_reg.async_get(mine.entity_id).disabled_by is er.RegistryEntryDisabler.USER
+    # Sensors still disabled by default stay disabled
+    assert ent_reg.async_get(still_off.entity_id).disabled_by is er.RegistryEntryDisabler.INTEGRATION
+
+
+async def test_respects_disable_new_entities_preference(hass: HomeAssistant, switch, entry):
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(entry, pref_disable_new_entities=True)
+    ent_reg = er.async_get(hass)
+    stale = ent_reg.async_get_or_create(
+        "sensor", DOMAIN, f"{SW}_2_link_status", config_entry=entry,
+        disabled_by=er.RegistryEntryDisabler.INTEGRATION,
+    )
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert ent_reg.async_get(stale.entity_id).disabled_by is er.RegistryEntryDisabler.INTEGRATION

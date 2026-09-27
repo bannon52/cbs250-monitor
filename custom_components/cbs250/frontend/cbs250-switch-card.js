@@ -49,6 +49,9 @@ const fmtSpeed = (v) => {
   return v >= 1000 ? `${v / 1000} Gb/s` : `${v} Mb/s`;
 };
 
+/** A rate for connected ports or any port with traffic; a dash otherwise. */
+const showRate = (p, v) => (p.up || v ? fmtRate(v) : "–");
+
 const fmtW = (v) => (v == null ? "–" : `${v.toFixed(1)} W`);
 
 const POE_TEXT = {
@@ -150,16 +153,24 @@ class Cbs250SwitchCard extends HTMLElement {
       const n = parseInt(m[1], 10);
       const e = idx.byDevice.get(dev.id) || {};
       const name = dev.name_by_user || dev.name || label;
-      const status = strState(hass, e.link_status);
+      const speed = numState(hass, e.link_speed);
+      const rx = numState(hass, e.rx_throughput);
+      const tx = numState(hass, e.tx_throughput);
+      // Prefer link status; fall back to link speed, then to traffic, so the
+      // card still works if some of these entities have been disabled.
+      let up;
+      if (e.link_status && hass.states[e.link_status]) up = strState(hass, e.link_status) === "up";
+      else if (e.link_speed && hass.states[e.link_speed]) up = (speed ?? 0) > 0;
+      else up = (rx ?? 0) > 0 || (tx ?? 0) > 0;
       ports.set(n, {
         n,
         label,
         name,
         labelled: name !== label,
-        up: status === "up",
-        speed: numState(hass, e.link_speed),
-        rx: numState(hass, e.rx_throughput),
-        tx: numState(hass, e.tx_throughput),
+        up,
+        speed,
+        rx,
+        tx,
         poe: numState(hass, e.poe_power),
         poeStatus: strState(hass, e.poe_status),
         cable: numState(hass, e.cable_length),
@@ -396,14 +407,14 @@ class Cbs250SwitchCard extends HTMLElement {
       .map((p) => {
         const sel = this._selected === p.n;
         const speed = fmtSpeed(p.speed);
-        const sub = p.up ? (p.labelled ? `${p.label}, ${speed || ""}` : speed || "") : p.labelled ? `${p.label}, disconnected` : "Disconnected";
+        const sub = p.up ? (p.labelled ? `${p.label}, ${speed || "connected"}` : speed || "Connected") : p.labelled ? `${p.label}, disconnected` : "Disconnected";
         const swatch = !p.up ? "known" : p.speed && p.speed < 1000 ? "up slow" : "up";
         const bar = (f) => `<span class="bar"><i style="width:${(f * 100).toFixed(1)}%"></i></span>`;
         return `<button class="row${p.up ? "" : " down"}${sel ? " sel" : ""}" data-port="${p.n}" data-focus="r-${p.n}" aria-pressed="${sel}">
           <span class="sw ${swatch}" aria-hidden="true"></span>
           <span class="who"><span class="nm">${esc(p.name)}</span><span class="sub">${esc(sub)}</span></span>
-          <span class="met rx"><span class="v">${p.up ? fmtRate(p.rx) : "–"}</span>${bar(p.up ? rateFraction(p.rx, p.speed) : 0)}</span>
-          <span class="met tx"><span class="v">${p.up ? fmtRate(p.tx) : "–"}</span>${bar(p.up ? rateFraction(p.tx, p.speed) : 0)}</span>
+          <span class="met rx"><span class="v">${showRate(p, p.rx)}</span>${bar(rateFraction(p.rx, p.speed || 1000))}</span>
+          <span class="met tx"><span class="v">${showRate(p, p.tx)}</span>${bar(rateFraction(p.tx, p.speed || 1000))}</span>
           <span class="met poe"><span class="v">${p.ents.poe_power ? (p.poe ? fmtW(p.poe) : "–") : ""}</span>${p.ents.poe_power ? bar(p.poe ? Math.min(1, p.poe / 30) : 0) : ""}</span>
         </button>`;
       })

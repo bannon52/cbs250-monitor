@@ -8,7 +8,11 @@ from pathlib import Path
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import config_validation as cv, device_registry as dr
+from homeassistant.helpers import (
+    config_validation as cv,
+    device_registry as dr,
+    entity_registry as er,
+)
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
 
@@ -19,6 +23,18 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BUTTON]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+# Port sensors that are enabled by default in the current version. Older
+# versions disabled some of these by default, and Home Assistant restores that
+# state even after the integration is removed and re-added.
+ENABLED_BY_DEFAULT_KEYS = (
+    "rx_throughput",
+    "tx_throughput",
+    "poe_power",
+    "link_status",
+    "link_speed",
+    "poe_status",
+)
 
 CARD_FILENAME = "cbs250-switch-card.js"
 CARD_URL = f"/{DOMAIN}/{CARD_FILENAME}"
@@ -61,6 +77,8 @@ async def _async_register_card(hass: HomeAssistant) -> None:
 
 async def async_setup_entry(hass: HomeAssistant, entry: Cbs250ConfigEntry) -> bool:
     """Set up CBS250 Monitor from a config entry."""
+    _async_enable_stale_defaults(hass, entry)
+
     coordinator = Cbs250Coordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
@@ -78,6 +96,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: Cbs250ConfigEntry) -> bo
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
+
+
+def _async_enable_stale_defaults(hass: HomeAssistant, entry: Cbs250ConfigEntry) -> None:
+    """Re-enable sensors that were disabled only by an old default.
+
+    Only entities disabled by the integration are touched. Entities the user
+    disabled (disabled_by=USER) are left alone, as is everything when the user
+    has turned off "Enable newly added entities" for this entry.
+    """
+    if entry.pref_disable_new_entities:
+        return
+    ent_reg = er.async_get(hass)
+    prefix = f"{switch_identifier(entry)}_"
+    for reg_entry in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
+        if reg_entry.disabled_by is not er.RegistryEntryDisabler.INTEGRATION:
+            continue
+        if not reg_entry.unique_id.startswith(prefix):
+            continue
+        if any(reg_entry.unique_id.endswith(f"_{key}") for key in ENABLED_BY_DEFAULT_KEYS):
+            ent_reg.async_update_entity(reg_entry.entity_id, disabled_by=None)
+            _LOGGER.info("Re-enabled %s (disabled by an older default)", reg_entry.entity_id)
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: Cbs250ConfigEntry) -> None:
