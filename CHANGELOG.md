@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.4.0
+
+### Added
+- **Dashboard card** (`custom:cbs250-switch-card`), installed and loaded automatically with the integration:
+  - Front-panel view of the switch with each port lit by link state and speed, and a bolt on ports delivering PoE.
+  - Summary of connected ports, PoE usage against the budget, and optional uplink throughput.
+  - Port table with download, upload and PoE, including bars for relative usage.
+  - Tap a jack or row for port details, and tap any value to open its history.
+  - Follows your Home Assistant light or dark theme, with a compact layout on phones.
+  - Keyboard accessible.
+- Entities now carry translation keys, which the card uses to find each metric regardless of entity ID. Names and entity IDs are unchanged.
+
 ## v0.3.0
 
 ### Changed

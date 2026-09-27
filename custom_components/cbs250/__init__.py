@@ -2,15 +2,26 @@
 
 from __future__ import annotations
 
+import logging
+from pathlib import Path
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import config_validation as cv, device_registry as dr
+from homeassistant.helpers.typing import ConfigType
+from homeassistant.loader import async_get_integration
 
 from .const import DOMAIN
 from .coordinator import Cbs250Coordinator
 
+_LOGGER = logging.getLogger(__name__)
+
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BUTTON]
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+CARD_FILENAME = "cbs250-switch-card.js"
+CARD_URL = f"/{DOMAIN}/{CARD_FILENAME}"
 
 type Cbs250ConfigEntry = ConfigEntry[Cbs250Coordinator]
 
@@ -23,6 +34,29 @@ def switch_identifier(entry: ConfigEntry) -> str:
 def port_identifier(entry: ConfigEntry, if_index: int) -> str:
     """Stable identifier for one port device."""
     return f"{switch_identifier(entry)}_port_{if_index}"
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Serve the dashboard card so it's available without adding a resource."""
+    await _async_register_card(hass)
+    return True
+
+
+async def _async_register_card(hass: HomeAssistant) -> None:
+    """Register the card's static path and load it on every dashboard."""
+    if hass.http is None or "frontend" not in hass.config.components:
+        return
+    from homeassistant.components.frontend import add_extra_js_url
+    from homeassistant.components.http import StaticPathConfig
+
+    card_path = Path(__file__).parent / "frontend" / CARD_FILENAME
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig(CARD_URL, str(card_path), True)]
+    )
+    # Version in the URL busts the browser cache on each update.
+    version = (await async_get_integration(hass, DOMAIN)).version
+    add_extra_js_url(hass, f"{CARD_URL}?v={version}")
+    _LOGGER.debug("Registered dashboard card at %s", CARD_URL)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: Cbs250ConfigEntry) -> bool:

@@ -266,6 +266,8 @@ class Cbs250PortSensor(CoordinatorEntity[Cbs250Coordinator], SensorEntity):
         super().__init__(coordinator)
         self.entity_description = description
         self._if_index = port.if_index
+        # Lets the dashboard card find each metric regardless of entity ID.
+        self._attr_translation_key = description.key
         switch_id = switch_identifier(entry)
         # Unique ID format unchanged from v0.2 so existing history carries over.
         self._attr_unique_id = f"{switch_id}_{port.if_index}_{description.key}"
@@ -327,6 +329,7 @@ class Cbs250TotalPoeSensor(_Cbs250SwitchSensor):
 
     entity_description = SensorEntityDescription(
         key="total_poe_power",
+        translation_key="total_poe_power",
         name="Total PoE power",
         native_unit_of_measurement=UnitOfPower.WATT,
         device_class=SensorDeviceClass.POWER,
@@ -357,6 +360,7 @@ class Cbs250PoeBudgetSensor(_Cbs250SwitchSensor):
 
     entity_description = SensorEntityDescription(
         key="poe_budget",
+        translation_key="poe_budget",
         name="PoE budget",
         native_unit_of_measurement=UnitOfPower.WATT,
         device_class=SensorDeviceClass.POWER,
@@ -374,6 +378,7 @@ class Cbs250PortsUpSensor(_Cbs250SwitchSensor):
 
     entity_description = SensorEntityDescription(
         key="ports_up",
+        translation_key="ports_up",
         name="Ports up",
         icon="mdi:ethernet",
         state_class=SensorStateClass.MEASUREMENT,

@@ -35,6 +35,33 @@ Tip: the switch is the easiest place to manage names (*Port Management > Port Se
 
 Cable length is a passive read of the PHY's VCT result, so it never triggers a TDR test or drops a link. It only reports when the switch has a value, which usually needs an active gigabit link.
 
+## Dashboard card
+
+The integration includes a dashboard card that shows the switch's front panel, with each port lit by link state, and a table of download, upload and PoE per port. It loads automatically, so there's no resource to add.
+
+![CBS250 switch card](docs/card-desktop.png)
+
+Add it from the card picker (search for *CBS250 switch*), or in YAML:
+
+```yaml
+type: custom:cbs250-switch-card
+uplink: gi17
+```
+
+Jacks are **green** at 1 Gb/s and **amber** at 10 or 100 Mb/s. A bolt marks ports delivering PoE, and faded jacks are unused. Tap a jack or a row to see that port's details, then tap any value to open its history.
+
+| Option | Default | Description |
+|---|---|---|
+| `uplink` | none | Port name (e.g. `gi17`) whose throughput is shown in the summary |
+| `title` | switch name | Card heading |
+| `device_id` | first switch found | Only needed with more than one switch |
+| `sfp_ports` | `2` | Number of SFP cages on the right of the panel |
+| `port_order` | `odd_top` | `odd_top` puts 1, 3, 5, 7 above 2, 4, 6, 8 as on the CBS250. Use `sequential` for 1 to 4 above 5 to 8 |
+
+On narrow screens the table switches to a compact layout with download and upload stacked.
+
+![Dark theme](docs/card-dark.png)
+
 ## Switch setup
 
 On the CBS250 web UI (Advanced mode):
