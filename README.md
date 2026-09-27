@@ -1,271 +1,72 @@
-"""Sensor platform for the CBS250 Monitor integration."""
+# CBS250 Monitor for Home Assistant
 
-from __future__ import annotations
+Local-polling SNMP integration for Cisco Business CBS250/CBS350 series switches (built and tested against a CBS250-16P-2G).
 
-from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Any
+## How devices are organised
 
-from homeassistant.components.sensor import (
-    SensorDeviceClass,
-    SensorEntity,
-    SensorEntityDescription,
-    SensorStateClass,
-)
-from homeassistant.const import (
-    CONF_HOST,
-    EntityCategory,
-    UnitOfDataRate,
-    UnitOfElectricCurrent,
-    UnitOfElectricPotential,
-    UnitOfLength,
-    UnitOfPower,
-)
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+The switch is one device, and **each port in use gets its own device** linked to it.
 
-from . import Cbs250ConfigEntry
-from .const import DOMAIN
-from .coordinator import Cbs250Coordinator, PortData
+- **Entity IDs follow the physical port** and never change: `sensor.gi5_poe_power`, `sensor.gi5_download`. Automations and dashboards stay attached to the port, whatever is plugged into it.
+- **Friendly names follow the port description** you set on the switch: the device shows as `Front Camera` and its sensors as `Front Camera PoE power`. The device page shows the port (`Port gi5`). Ports with no description are simply named `gi5`.
 
+A port gets a device when it has a **description set**, an **active link**, or is **delivering PoE**. Empty, unlabelled, unplugged ports are skipped.
 
-@dataclass(frozen=True, kw_only=True)
-class Cbs250PortSensorDescription(SensorEntityDescription):
-    """Describes a per-port sensor."""
+- **New ports appear automatically** on the next poll, with no reload needed. Press **Rescan ports** on the switch device to check immediately.
+- **Ports are never removed automatically.** Unplugging something just shows link down and 0 W; the device and its history stay, including across restarts.
+- **Moving things around:** change the port descriptions on the switch and the friendly names update on the next poll; entity IDs stay put. You can also rename a device in Home Assistant, which takes priority over the switch description until you clear it.
+- **To remove a port device**, delete it from its device page. It only comes back if the port qualifies again.
 
-    value_fn: Callable[[PortData], Any]
-    exists_fn: Callable[[PortData], bool] = lambda port: True
+Tip: the switch is the easiest place to manage names (*Port Management > Port Settings > Description*), since one change there updates the device and all its sensors.
 
+## Sensors
 
-PORT_SENSORS: tuple[Cbs250PortSensorDescription, ...] = (
-    Cbs250PortSensorDescription(
-        key="rx_throughput",
-        name="Download",
-        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
-        device_class=SensorDeviceClass.DATA_RATE,
-        state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=2,
-        icon="mdi:download-network",
-        value_fn=lambda p: p.rx_mbps,
-    ),
-    Cbs250PortSensorDescription(
-        key="tx_throughput",
-        name="Upload",
-        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
-        device_class=SensorDeviceClass.DATA_RATE,
-        state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=2,
-        icon="mdi:upload-network",
-        value_fn=lambda p: p.tx_mbps,
-    ),
-    Cbs250PortSensorDescription(
-        key="link_speed",
-        name="Link speed",
-        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
-        device_class=SensorDeviceClass.DATA_RATE,
-        suggested_display_precision=0,
-        icon="mdi:speedometer",
-        value_fn=lambda p: p.link_speed_mbps if p.oper_status == "up" else 0,
-    ),
-    Cbs250PortSensorDescription(
-        key="poe_power",
-        name="PoE power",
-        native_unit_of_measurement=UnitOfPower.WATT,
-        device_class=SensorDeviceClass.POWER,
-        state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=1,
-        value_fn=lambda p: p.poe_power_w,
-        exists_fn=lambda p: p.poe_capable,
-    ),
-    Cbs250PortSensorDescription(
-        key="poe_voltage",
-        name="PoE voltage",
-        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-        value_fn=lambda p: p.poe_voltage_v,
-        exists_fn=lambda p: p.poe_capable,
-    ),
-    Cbs250PortSensorDescription(
-        key="poe_current",
-        name="PoE current",
-        native_unit_of_measurement=UnitOfElectricCurrent.MILLIAMPERE,
-        device_class=SensorDeviceClass.CURRENT,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-        value_fn=lambda p: p.poe_current_ma,
-        exists_fn=lambda p: p.poe_capable,
-    ),
-    Cbs250PortSensorDescription(
-        key="poe_status",
-        name="PoE status",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        icon="mdi:power-plug",
-        value_fn=lambda p: p.poe_status,
-        exists_fn=lambda p: p.poe_capable,
-    ),
-    Cbs250PortSensorDescription(
-        key="cable_length",
-        name="Cable length",
-        native_unit_of_measurement=UnitOfLength.METERS,
-        device_class=SensorDeviceClass.DISTANCE,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        icon="mdi:cable-data",
-        value_fn=lambda p: p.cable_length_m,
-    ),
-    Cbs250PortSensorDescription(
-        key="link_status",
-        name="Link status",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-        icon="mdi:ethernet",
-        value_fn=lambda p: p.oper_status,
-    ),
-)
+**Switch device**
+- Total PoE power, with a live per-port breakdown in the `ports` attribute (excluded from the recorder to keep the database lean)
+- Ports up (with `total_ports` attribute)
+- PoE budget (diagnostic)
+- Rescan ports button
 
+**Each port device**
+- Download / upload throughput (Mbit/s), from 64-bit counter deltas
+- PoE power (W), on PoE ports
+- Link status and link speed (diagnostic)
+- PoE status, with Cisco's status text as an attribute (diagnostic)
+- Cable length, PoE voltage, PoE current (diagnostic, disabled by default — enable per entity)
 
-async def async_setup_entry(
-    hass: HomeAssistant,
-    entry: Cbs250ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
-) -> None:
-    """Set up sensors from a config entry."""
-    coordinator = entry.runtime_data
-    device_info = DeviceInfo(
-        identifiers={(DOMAIN, entry.unique_id or entry.entry_id)},
-        name=entry.title,
-        manufacturer="Cisco",
-        model="CBS250 series",
-        configuration_url=f"https://{entry.data[CONF_HOST]}",
-    )
+Cable length is a passive read of the PHY's VCT result, so it never triggers a TDR test or drops a link. It only reports when the switch has a value, which usually needs an active gigabit link.
 
-    entities: list[SensorEntity] = []
-    for if_index, port in coordinator.data.ports.items():
-        for description in PORT_SENSORS:
-            if description.exists_fn(port):
-                entities.append(
-                    Cbs250PortSensor(coordinator, entry, description, if_index, device_info)
-                )
+## Switch setup
 
-    entities.append(
-        Cbs250SwitchSensor(
-            coordinator,
-            entry,
-            SensorEntityDescription(
-                key="total_poe_power",
-                name="Total PoE power",
-                native_unit_of_measurement=UnitOfPower.WATT,
-                device_class=SensorDeviceClass.POWER,
-                state_class=SensorStateClass.MEASUREMENT,
-            ),
-            lambda d: d.total_poe_w,
-            device_info,
-        )
-    )
-    entities.append(
-        Cbs250SwitchSensor(
-            coordinator,
-            entry,
-            SensorEntityDescription(
-                key="poe_budget",
-                name="PoE budget",
-                native_unit_of_measurement=UnitOfPower.WATT,
-                device_class=SensorDeviceClass.POWER,
-                entity_category=EntityCategory.DIAGNOSTIC,
-            ),
-            lambda d: d.nominal_poe_w,
-            device_info,
-        )
-    )
+On the CBS250 web UI (Advanced mode):
 
-    async_add_entities(entities)
+1. **Security > TCP/UDP Services** → enable **SNMP Service**
+2. **SNMP > Communities** → Add: community string of your choice, SNMP Management Station = your HA IP (or All), Access Mode = **Read Only**
+3. Save the running config to startup config
 
+## Install
 
-class Cbs250PortSensor(CoordinatorEntity[Cbs250Coordinator], SensorEntity):
-    """A sensor for a single switch port."""
+1. HACS → Integrations → ⋮ → **Custom repositories** → add this repo as type *Integration*
+2. Install **CBS250 Monitor**, restart Home Assistant
+3. Settings → Devices & Services → **Add Integration** → CBS250 Monitor
+4. Enter the switch IP and community string
 
-    entity_description: Cbs250PortSensorDescription
-    _attr_has_entity_name = True
+Options (gear icon on the integration): polling interval (default 30 s) and toggling the cable-length poll.
 
-    def __init__(
-        self,
-        coordinator: Cbs250Coordinator,
-        entry: Cbs250ConfigEntry,
-        description: Cbs250PortSensorDescription,
-        if_index: int,
-        device_info: DeviceInfo,
-    ) -> None:
-        """Initialise the port sensor."""
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._if_index = if_index
-        port = coordinator.data.ports[if_index]
-        port_label = port.name or f"port{if_index}"
-        self._attr_name = f"{port_label} {description.name}"
-        base = entry.unique_id or entry.entry_id
-        self._attr_unique_id = f"{base}_{if_index}_{description.key}"
-        self._attr_device_info = device_info
+## Notes / troubleshooting
 
-    @property
-    def _port(self) -> PortData | None:
-        return self.coordinator.data.ports.get(self._if_index)
-
-    @property
-    def available(self) -> bool:
-        """Available while the coordinator succeeds and the port exists."""
-        return super().available and self._port is not None
-
-    @property
-    def native_value(self) -> Any:
-        """Return the sensor value."""
-        port = self._port
-        if port is None:
-            return None
-        return self.entity_description.value_fn(port)
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any] | None:
-        """Attach port context to every sensor."""
-        port = self._port
-        if port is None:
-            return None
-        attrs: dict[str, Any] = {
-            "port": port.name,
-            "description": port.alias or None,
-            "link_status": port.oper_status,
-        }
-        if self.entity_description.key == "poe_status" and port.poe_status_descr:
-            attrs["status_detail"] = port.poe_status_descr
-        return attrs
-
-
-class Cbs250SwitchSensor(CoordinatorEntity[Cbs250Coordinator], SensorEntity):
-    """A switch-level sensor."""
-
-    _attr_has_entity_name = True
-
-    def __init__(
-        self,
-        coordinator: Cbs250Coordinator,
-        entry: Cbs250ConfigEntry,
-        description: SensorEntityDescription,
-        value_fn: Callable[[Any], Any],
-        device_info: DeviceInfo,
-    ) -> None:
-        """Initialise the switch sensor."""
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._value_fn = value_fn
-        base = entry.unique_id or entry.entry_id
-        self._attr_unique_id = f"{base}_{description.key}"
-        self._attr_device_info = device_info
-
-    @property
-    def native_value(self) -> Any:
-        """Return the sensor value."""
-        return self._value_fn(self.coordinator.data)
+- SNMP v2c only for now. The community string travels in cleartext, so keep it on your management VLAN and read-only.
+- Throughput needs two polls before it shows a value (rate = counter delta / time delta).
+- If PoE sensors don't line up with the right ports, verify the PoE index matches ifIndex on your firmware:
+  ```bash
+  snmpwalk -v2c -c <community> <switch-ip> 1.3.6.1.4.1.9.6.1.101.108.1.1.5
+  # rlPethPsePortOutputPower, index = group.port (mW)
+  snmpwalk -v2c -c <community> <switch-ip> 1.3.6.1.2.1.31.1.1.1.1
+  # ifName, index = ifIndex
+  ```
+- Cable length uses:
+  ```bash
+  snmpwalk -v2c -c <community> <switch-ip> 1.3.6.1.4.1.9.6.1.101.90.1.2.1.3
+  # rlPhyTestGetResult, index = ifIndex.testType (testType 4 = cable length, metres)
+  ```
+  If your firmware returns nothing there, turn the option off to save a poll.
+- The integration requires `pysnmp >= 7.1`, which is the same library recent Home Assistant core versions ship for the built-in SNMP integration.
